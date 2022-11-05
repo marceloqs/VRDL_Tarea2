@@ -151,12 +151,13 @@ if __name__ == '__main__' :
       for i in range(lenght):
         if l_labels[i] == l_preds[i]:
           hits +=1
-        else:
-          print("input:{}, pred:{}, false".format(l_labels[i], l_preds[i]))
+        #else:
+          #print("input:{}, pred:{}, false".format(l_labels[i], l_preds[i]))
       acc = hits / lenght
+      print()
       print("Aciertos: {}".format(hits))
       print("Len val_dataset: {}".format(lenght))
-      print("Accuracy Montos: {}".format(acc))
+      print("Accuracy Montos: {:.2f}".format(acc))
                                
     #save the model   
     if pargs.save :
