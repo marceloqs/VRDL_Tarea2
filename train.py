@@ -11,12 +11,15 @@ To use train.py, you will require to set the following parameters :
 """
 import pathlib
 import sys
+
+from tensorflow.python.compiler.xla import xla
 sys.path.append(str(pathlib.Path().absolute()))
 import tensorflow as tf
 from models import resnet
 import datasets.data as data
 import utils.configuration as conf
 import utils.losses as losses
+import utils.imgproc as imgproc
 import numpy as np
 import argparse
 import os
@@ -25,19 +28,19 @@ if __name__ == '__main__' :
     parser = argparse.ArgumentParser(description = "Train a simple mnist model")
     parser.add_argument("-config", type = str, help = "<str> configuration file", required = True)
     parser.add_argument("-name", type=str, help=" name of section in the configuration file", required = True)
-    parser.add_argument("-mode", type=str, choices=['train', 'test'],  help=" train or test", required = False, default = 'train')
+    parser.add_argument("-mode", type=str, choices=['train', 'test', 'predict'],  help=" train or test", required = False, default = 'train')
     parser.add_argument("-save", type= bool,  help=" True to save the model", required = False, default = False)    
     pargs = parser.parse_args()     
     configuration_file = pargs.config
     configuration = conf.ConfigurationFile(configuration_file, pargs.name)                   
     if pargs.mode == 'train' :
         tfr_train_file = os.path.join(configuration.get_data_dir(), "train.tfrecords")
-    if pargs.mode == 'train' or  pargs.mode == 'test':    
+    if pargs.mode == 'train' or  pargs.mode == 'test'  or  pargs.mode == 'predict':    
         tfr_test_file = os.path.join(configuration.get_data_dir(), "test.tfrecords")
     if configuration.use_multithreads() :
         if pargs.mode == 'train' :
             tfr_train_file=[os.path.join(configuration.get_data_dir(), "train_{}.tfrecords".format(idx)) for idx in range(configuration.get_num_threads())]
-        if pargs.mode == 'train' or  pargs.mode == 'test':    
+        if pargs.mode == 'train' or  pargs.mode == 'test' or  pargs.mode == 'predict':    
             tfr_test_file=[os.path.join(configuration.get_data_dir(), "test_{}.tfrecords".format(idx)) for idx in range(configuration.get_num_threads())]        
     sys.stdout.flush()
         
@@ -57,11 +60,12 @@ if __name__ == '__main__' :
         tr_dataset = tr_dataset.batch(batch_size = configuration.get_batch_size())    
         
 
-    if pargs.mode == 'train' or  pargs.mode == 'test':
+    if pargs.mode == 'train' or  pargs.mode == 'test' or  pargs.mode == 'predict':
         val_dataset = tf.data.TFRecordDataset(tfr_test_file)
         val_dataset = val_dataset.map(lambda x : data.parser_tfrecord(x, input_shape, mean_image, number_of_classes, with_augmentation = False));    
         val_dataset = val_dataset.batch(batch_size = configuration.get_batch_size())
                         
+
         
     #tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=configuration.get_snapshot_dir(), histogram_freq=1)
     #Defining callback for saving checkpoints
@@ -73,6 +77,9 @@ if __name__ == '__main__' :
         monitor='val_acc',
         save_freq = 'epoch',            
         )
+
+    process_fun = imgproc.process_mnist
+
     model = resnet.RecogNet([3,4,6,3],[32,64,128,256], configuration.get_number_of_classes(), use_bottleneck = False)
     print('Model is Resnet')
     sys.stdout.flush()    
@@ -81,6 +88,7 @@ if __name__ == '__main__' :
     input_image = tf.keras.Input((input_shape[0], input_shape[1], input_shape[2]), name = 'input_image')     
     model(input_image)    
     model.summary()
+  
     #use_checkpoints to load weights
     if configuration.use_checkpoint() :                
         model.load_weights(configuration.get_checkpoint_file(), by_name = True, skip_mismatch = True)
@@ -109,7 +117,47 @@ if __name__ == '__main__' :
                 
     elif pargs.mode == 'test' :
         model.evaluate(val_dataset,
-                       steps = configuration.get_validation_steps())                                               
+                       steps = configuration.get_validation_steps())            
+
+    elif pargs.mode == 'predict':
+
+      l_labels = []
+      for inputs, labels in val_dataset.take(-1):
+        for y in labels:
+          for z in y:
+            sample_label = z
+            sample_label = np.argmax(sample_label, axis=1)
+            sample_label = int(''.join(map(str,sample_label)))
+            l_labels.append(sample_label)
+      #print(l_labels)
+      #print(type(l_labels))
+      #print(len(l_labels))
+
+      l_preds = []
+      pred = model.predict(val_dataset)
+
+      for x in pred:
+        for y in x:
+          sample_pred = y
+          sample_pred = np.argmax(sample_pred, axis=1)
+          sample_pred = int(''.join(map(str,sample_pred)))
+          l_preds.append(sample_pred)
+      #print(l_preds)
+      #print(type(l_preds))
+      #print(len(l_preds))
+
+      hits = 0
+      lenght = len(l_preds) 
+      for i in range(lenght):
+        if l_labels[i] == l_preds[i]:
+          hits +=1
+        else:
+          print("input:{}, pred:{}, false".format(l_labels[i], l_preds[i]))
+      acc = hits / lenght
+      print("Aciertos: {}".format(hits))
+      print("Len val_dataset: {}".format(lenght))
+      print("Accuracy Montos: {}".format(acc))
+                               
     #save the model   
     if pargs.save :
         saved_to = os.path.join(configuration.get_data_dir(),"cnn-model")
